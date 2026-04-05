@@ -158,9 +158,43 @@ class GitOps:
             except Exception as e:
                 raise GitOpsError(f"Cannot resolve base ref '{base}' in {self.repo_name}: {e}")
 
+        # Stash any dirty working-tree changes so checkout doesn't abort.
+        # This covers the case where codegen already wrote files to disk on the
+        # current branch before git_operations creates the feature branch.
+        stashed = False
+        if not self.is_clean():
+            try:
+                repo.git.stash("push", "--include-untracked", "-m", "kb-feature-builder-temp")
+                stashed = True
+                logger.info(f"Stashed dirty working tree in {self.repo_name} before branch switch")
+            except Exception as e:
+                raise GitOpsError(
+                    f"Working tree in {self.repo_name} is dirty and stash failed: {e}. "
+                    "Commit or stash your changes manually before running the Feature Builder."
+                )
+
         # Create and checkout branch
-        new_branch = repo.create_head(branch_name, commit=str(base_commit))
-        new_branch.checkout()
+        try:
+            new_branch = repo.create_head(branch_name, commit=str(base_commit))
+            new_branch.checkout()
+        except Exception:
+            # Restore stash if checkout itself fails so the developer's work isn't lost
+            if stashed:
+                try:
+                    repo.git.stash("pop")
+                    logger.info(f"Restored stash in {self.repo_name} after failed checkout")
+                except Exception as pop_err:
+                    logger.warning(f"Could not restore stash in {self.repo_name}: {pop_err}")
+            raise
+
+        # Pop the stash onto the new branch so the codegen writes are back on disk
+        if stashed:
+            try:
+                repo.git.stash("pop")
+                logger.info(f"Popped stash onto branch '{branch_name}' in {self.repo_name}")
+            except Exception as e:
+                logger.warning(f"Stash pop failed in {self.repo_name}: {e}; files may need manual recovery")
+
         logger.info(f"Created and checked out branch '{branch_name}' in {self.repo_name}")
         
         # Audit log

@@ -410,14 +410,23 @@ class PRCreator:
     def _find_existing_pr(self, gh_repo, head_branch: str, base_branch: str):
         """
         Check for existing open PR from head_branch to base_branch (Item 10).
-        
+
+        The GitHub API requires head in "owner:branch" format for cross-repo
+        filtering. Passing a bare branch name causes the API to ignore the
+        filter and return ALL open PRs, so the first unrelated PR would be
+        falsely treated as a duplicate.
+
         Returns the PR object if found, None otherwise.
         """
         try:
-            # PyGitHub's get_pulls returns PRs matching criteria
-            pulls = gh_repo.get_pulls(state="open", head=head_branch, base=base_branch)
+            # Build the qualified head ref the GitHub API requires
+            owner = gh_repo.owner.login
+            qualified_head = f"{owner}:{head_branch}"
+            pulls = gh_repo.get_pulls(state="open", head=qualified_head, base=base_branch)
             for pr in pulls:
-                return pr  # Return first match
+                # Double-check the head ref matches exactly (defensive guard)
+                if pr.head.ref == head_branch:
+                    return pr
         except Exception as e:
             logger.debug(f"Error checking for existing PRs: {e}")
         return None

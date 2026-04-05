@@ -435,7 +435,8 @@ Style references from this codebase — match these patterns exactly:
                             content=f"Unknown tool: {tool_name}",
                             tool_call_id=tool_call_id,
                         ))
-                    
+
+                # Count LLM rounds, not individual tool calls within a round
                 iterations += 1
             else:
                 # No more tool calls, move to synthesis
@@ -601,8 +602,40 @@ Be thorough and specific. Include file paths and function names you discovered.
             )
     
     def _build_prompt(self, query: str, context: Optional[dict]) -> str:
-        """Build the analysis prompt."""
-        prompt = f"""Analyze the following in the {self.repo} repository:
+        """Build the analysis or implementation prompt depending on mode."""
+        if self.is_codegen:
+            # Extract the explicit file list from context so the LLM cannot
+            # skip writes by claiming the feature is "already implemented".
+            required_files_section = ""
+            if context and context.get("required_files"):
+                files = context["required_files"]
+                file_lines = "\n".join(f"  - {f}" for f in files)
+                required_files_section = f"""
+REQUIRED FILES — you MUST call edit_file or create_file for EVERY one of these, \
+even if the file already exists on disk (it may contain stale content from a \
+previous failed run):
+{file_lines}
+"""
+
+            prompt = f"""Implement the following in the {self.repo} repository:
+
+{query}
+{required_files_section}
+Steps you MUST follow:
+1. Use get_file_content or search_code to read every file you plan to change BEFORE editing it.
+2. Call edit_file or create_file for EACH file that needs changes — one tool call per file.
+3. IMPORTANT: Do NOT skip a file because it appears to already contain the right code. \
+Always call edit_file/create_file to record the change in the tracker, even for minor adjustments.
+4. After all edits, respond with:
+
+IMPLEMENTATION COMPLETE
+Files modified: <comma-separated list>
+Summary: <1-2 sentence summary>
+Testing: <key test scenarios>
+
+Focus only on the {self.repo} repository."""
+        else:
+            prompt = f"""Analyze the following in the {self.repo} repository:
 
 {query}
 
@@ -616,8 +649,11 @@ Please:
 Focus only on the {self.repo} repository."""
 
         if context:
-            prompt += f"\n\nAdditional context:\n{context}"
-        
+            # Exclude internal keys that aren't useful as raw context for the LLM
+            extra = {k: v for k, v in context.items() if k not in ("required_files",)}
+            if extra:
+                prompt += f"\n\nAdditional context:\n{extra}"
+
         return prompt
 
 

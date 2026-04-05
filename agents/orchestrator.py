@@ -526,6 +526,17 @@ Orbit (Frontend) Analysis:
 
         # --- Trinity first (stabilise API contract) ---
         trinity_path = settings.trinity_repo_path
+        if trinity_path and trinity_analysis and trinity_analysis.confidence == "low":
+            logger.warning(
+                "  → Skipping Trinity codegen: analysis confidence is LOW. "
+                "Re-run the analysis with a more specific feature description, "
+                "or inspect the trinity_analysis for details."
+            )
+            state.setdefault("error", "")
+            state["error"] = (
+                (state.get("error") or "") +
+                "\nTrinity codegen skipped: analysis confidence too low to safely generate code."
+            )
         if trinity_path and trinity_analysis and trinity_analysis.confidence != "low":
             logger.info("Running Trinity codegen subagent…")
             # Inject dry_run into tool context via environment variable so
@@ -537,6 +548,7 @@ Orbit (Frontend) Analysis:
                 system_prompt=TRINITY_CODEGEN_PROMPT,
                 tools=CODEGEN_TOOLS + VERIFY_TOOLS + ALL_TOOLS,
                 max_iterations=15,
+                is_codegen=True,
             )
             try:
                 resp = trinity_codegen.analyze(
@@ -546,7 +558,11 @@ Orbit (Frontend) Analysis:
                         f"Analysis: {trinity_analysis.analysis}\n\n"
                         f"Suggested changes: {', '.join(trinity_analysis.suggested_changes)}"
                     ),
-                    context={"plan": plan_text, "dry_run": dry_run},
+                    context={
+                        "plan": plan_text,
+                        "dry_run": dry_run,
+                        "required_files": trinity_analysis.impacted_files,
+                    },
                 )
                 all_results.append({"repo": "trinity", "analysis": resp.analysis})
                 succeeded_repos.append("trinity")  # Track success (Item 10)
@@ -557,6 +573,17 @@ Orbit (Frontend) Analysis:
 
         # --- Orbit second (consumes any new API) ---
         orbit_path = settings.orbit_repo_path
+        if orbit_path and orbit_analysis and orbit_analysis.confidence == "low":
+            logger.warning(
+                "  → Skipping Orbit codegen: analysis confidence is LOW. "
+                "Re-run the analysis with a more specific feature description, "
+                "or inspect the orbit_analysis for details."
+            )
+            state.setdefault("error", "")
+            state["error"] = (
+                (state.get("error") or "") +
+                "\nOrbit codegen skipped: analysis confidence too low to safely generate code."
+            )
         if orbit_path and orbit_analysis and orbit_analysis.confidence != "low":
             logger.info("Running Orbit codegen subagent…")
             orbit_codegen = Subagent(
@@ -564,6 +591,7 @@ Orbit (Frontend) Analysis:
                 system_prompt=ORBIT_CODEGEN_PROMPT,
                 tools=CODEGEN_TOOLS + VERIFY_TOOLS + ALL_TOOLS,
                 max_iterations=15,
+                is_codegen=True,
             )
             try:
                 resp = orbit_codegen.analyze(
@@ -573,7 +601,11 @@ Orbit (Frontend) Analysis:
                         f"Analysis: {orbit_analysis.analysis}\n\n"
                         f"Suggested changes: {', '.join(orbit_analysis.suggested_changes)}"
                     ),
-                    context={"plan": plan_text, "dry_run": dry_run},
+                    context={
+                        "plan": plan_text,
+                        "dry_run": dry_run,
+                        "required_files": orbit_analysis.impacted_files,
+                    },
                 )
                 all_results.append({"repo": "orbit", "analysis": resp.analysis})
                 succeeded_repos.append("orbit")  # Track success (Item 10)
@@ -757,11 +789,14 @@ Orbit (Frontend) Analysis:
         tracker = get_tracker()
         dry_run = state.get("dry_run", True)
         branch_names = state.get("branch_names", {})
+        # Always reset pr_results so stale checkpoint data from a prior run
+        # never surfaces as if the current run created PRs.
+        state["pr_results"] = []
         logger.info(f"  dry_run    : {dry_run}")
         logger.info(f"  branches   : {branch_names}")
 
         if not branch_names:
-            state["pr_results"] = []
+            logger.warning("  → No branches to PR against — codegen produced no tracked changes.")
             return state
 
         creator = PRCreator(dry_run=dry_run, llm=llm)
@@ -1438,13 +1473,10 @@ class Orchestrator:
         except Exception as e:
             raise ValueError(f"Failed to retrieve checkpoint: {e}")
         
-        # Update the state with new approval/dry_run values
-        # This allows resuming past the approval gate
-        update_state = {
-            "approved": approved,
-            "dry_run": dry_run,
-        }
-        
+        # Update the state with new approval/dry_run values so the resumed
+        # run uses the caller's intent, not the stale checkpoint values.
+        self.graph.update_state(config, {"approved": approved, "dry_run": dry_run})
+
         # Resume execution
         final_state = self.graph.invoke(None, config=config)
         result = self._format_result(final_state)
