@@ -1,0 +1,40 @@
+# Core
+python-dotenv>=1.0.0
+pydantic>=2.0
+pydantic-settings>=2.0
+rich>=13.0
+click>=8.0
+
+# Tree-sitter parsing
+# tree-sitter 0.24+ requires Python >=3.10; use 0.23.x on Python 3.9
+tree-sitter>=0.22,<0.24
+tree-sitter-typescript>=0.23
+tree-sitter-java>=0.23
+
+# Graph database
+neo4j>=5.0
+
+# Vector database
+qdrant-client>=1.9
+
+# OpenAI for embeddings
+openai>=1.0
+
+# Agents
+langgraph>=0.2
+langchain>=0.3
+langchain-openai>=0.2
+
+# UI
+streamlit>=1.35
+streamlit-agraph>=0.0.45
+streamlit-extras>=0.4.0
+
+# Feature Builder — code generation and GitHub integration
+PyGithub>=2.0          # GitHub API for PR creation
+gitpython>=3.1         # Local git operations (branch, commit, push)
+unidiff>=0.7           # Parse/display unified diffs in UI
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.23
